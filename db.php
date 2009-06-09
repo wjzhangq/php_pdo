@@ -253,7 +253,7 @@ class db_table implements ArrayAccess, Countable
     {
         $where = $this->offset_parse($offset);
         $sql = 'DELETE FROM `'.$this->table_name.'` WHERE ' . $where;
-        echo $sql;
+
         return $this->db->query($sql);
     }
     
