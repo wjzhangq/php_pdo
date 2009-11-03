@@ -46,8 +46,8 @@ class db extends PDO implements ArrayAccess, Countable
     
     function offsetUnset($offset)
     {
-        //nothing
-        //todo: drop a table
+		//TRUNCATE a table
+        self::query('TRUNCATE TABLE ' . $offset);
     }
     
     //implements Countable
@@ -116,7 +116,7 @@ class db extends PDO implements ArrayAccess, Countable
 
         if (!isset($args[0]))
         {
-            throw new Exception('less param for query');
+            throw new Exception('less param for query', 10);
         }
 
         switch (count($args))
@@ -134,7 +134,7 @@ class db extends PDO implements ArrayAccess, Countable
                 }
                 else
                 {
-                    throw  new Exception ('Unsuport param for query!');
+                    throw  new Exception ('Unsuport param for query!', 10);
                 }
                 break;
             case 2:
@@ -142,23 +142,42 @@ class db extends PDO implements ArrayAccess, Countable
                 $param = $args[1];
                 break;
             default:
-                throw  new Exception ('Unsuport param for query!');
+                throw  new Exception ('Unsuport param for query!', 10);
                 break;
         }
 
+		if (DEBUG){
+			//调试信息
+			$ext  = '';
+			if ($param){
+				$ext = json_encode($param);
+			}
+			debug::log_sql($sql.$ext);
+			if (defined("CHANGE_LOG") && CHANGE_LOG){
+				debug::parse_sql($sql, $param);
+			}
+		}
+
+		
         if ($param)
         {
             $sth = $this->prepare($sql, array(PDO::ATTR_CURSOR => PDO::CURSOR_FWDONLY));
+			if (!$sth){
+				$errorInfo = $this->errorInfo();
+                throw new Exception("Error sql query:$sql\n" . $errorInfo[2], 10);	
+			}
             if (!$sth->execute($param))
             {
-                throw new Exception("Error sql prepare:$sql");
+				$error_info = $sth->errorInfo();
+                throw new Exception("Error sql prepare:$sql\n" . $error_info[2], 10);
             }
         }
         else
         {
             if (!$sth = parent::query($sql))
             {
-                throw new Exception("Error sql query:$sql");
+				$errorInfo = $this->errorInfo();
+                throw new Exception("Error sql query:$sql\n" . $errorInfo[2], 10);
             }
         }
         
@@ -237,12 +256,12 @@ class db_table implements ArrayAccess, Countable
             if (isset($offset))
             {
                 $where = $this->offset_parse($offset);
-                $sql = 'UPDATE `'. $this->table_name . '` SET ' . rawurldecode(http_build_query($tmp, '', ',')) . ' WHERE ' . $where;
+                $sql = 'UPDATE `'. $this->table_name . '` SET ' . $this->build_query($tmp) . ' WHERE ' . $where;
                 
             }
             else
             {
-                $sql = 'INSERT INTO `'.$this->table_name.'` SET ' . rawurldecode(http_build_query($tmp, '', ','));
+                $sql = 'INSERT INTO `'.$this->table_name.'` SET ' . $this->build_query($tmp);
             }
             $param = array_intersect_key($value, $tmp);
             $this->db->query($sql, $param);
@@ -259,7 +278,7 @@ class db_table implements ArrayAccess, Countable
     
     function count()
     {
-        return 10;
+        return 0;
     }
     
     //私有函数
@@ -270,6 +289,7 @@ class db_table implements ArrayAccess, Countable
         {
             case 'integer':
             case 'string':
+			case 'double':
                 if ($this->table_key)
                 {
                     $where = '`' . $this->table_key . '`= \'' . addcslashes($offset, '\'') . '\'';
@@ -291,9 +311,22 @@ class db_table implements ArrayAccess, Countable
                 $where = implode(' AND ', $set);
                 break;
             default:
+				throw new Exception('unsuport type "' . gettype($offset) . '"', 10);
+				break;
         }
         
         return $where;
     }
+	
+	//将数值转化`key`=value形式
+	private function build_query($data){
+		$query = '';
+		foreach($data as $key=>$val){
+			$query .= '`' . $key . '`=' . $val . ', ';
+		}
+		$query = rtrim($query, ' ,');
+		
+		return $query;
+	}
 }
 ?>
