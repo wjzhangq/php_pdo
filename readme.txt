@@ -6,3 +6,6 @@
 6. $db['table']->insert(array('kk'=>'fff'));  //将数据插入到table表
 7. $db['table'][1] = array('kk'=>'fff'); //更新数据
 8. unset($db['table][1]); //删除数据
+9. $db['table'][array('id:>'=>1)] //id > 1 id大于1的数据, 支持>, <, >=, <=, =
+10. $db['table']->set_order(array('pk_video'=>'desc'));
+11. $db['table']->set_limit(2);

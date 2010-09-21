@@ -4,14 +4,15 @@
  * author: wjzhangq <wjzhangq@126.com>
  */
  
-class db extends PDO implements ArrayAccess, Countable
+class db implements ArrayAccess, Countable
 {
     protected $tables; //db中所有表
+    protected $pdo;
     
     //初始化
     function __construct($dsn, $username=null, $password=null, $driver_options=null)
     {
-        parent::__construct($dsn, $username, $password, $driver_options);
+        $this->pdo = new PDO($dsn, $username, $password, $driver_options);
         
         $this->init_tables();
     }
@@ -46,7 +47,7 @@ class db extends PDO implements ArrayAccess, Countable
     
     function offsetUnset($offset)
     {
-		//TRUNCATE a table
+        //TRUNCATE a table
         self::query('TRUNCATE TABLE ' . $offset);
     }
     
@@ -145,38 +146,25 @@ class db extends PDO implements ArrayAccess, Countable
                 throw  new Exception ('Unsuport param for query!', 10);
                 break;
         }
-
-		if (DEBUG){
-			//调试信息
-			$ext  = '';
-			if ($param){
-				$ext = json_encode($param);
-			}
-			debug::log_sql($sql.$ext);
-			if (defined("CHANGE_LOG") && CHANGE_LOG){
-				debug::parse_sql($sql, $param);
-			}
-		}
-
-		
+     echo $sql;
         if ($param)
         {
-            $sth = $this->prepare($sql, array(PDO::ATTR_CURSOR => PDO::CURSOR_FWDONLY));
-			if (!$sth){
-				$errorInfo = $this->errorInfo();
-                throw new Exception("Error sql query:$sql\n" . $errorInfo[2], 10);	
-			}
+            $sth = $this->pdo->prepare($sql, array(PDO::ATTR_CURSOR => PDO::CURSOR_FWDONLY));
+            if (!$sth){
+                $errorInfo = $this->pdo->errorInfo();
+                throw new Exception("Error sql query:$sql\n" . $errorInfo[2], 10);  
+            }
             if (!$sth->execute($param))
             {
-				$error_info = $sth->errorInfo();
+                $error_info = $sth->errorInfo();
                 throw new Exception("Error sql prepare:$sql\n" . $error_info[2], 10);
             }
         }
         else
         {
-            if (!$sth = parent::query($sql))
+            if (!$sth = $this->pdo->query($sql))
             {
-				$errorInfo = $this->errorInfo();
+                $errorInfo = $this->pdo->errorInfo();
                 throw new Exception("Error sql query:$sql\n" . $errorInfo[2], 10);
             }
         }
@@ -199,6 +187,9 @@ class db_table implements ArrayAccess, Countable
     protected $table_fileds; //表字段
     protected $table_key; //表主键
     protected $db; //db
+    
+    protected $limit = array(); //限制
+    protected $order = array(); //排序
     
     function __construct(&$db, $table_name)
     {
@@ -227,6 +218,56 @@ class db_table implements ArrayAccess, Countable
         return $this->table_key ? $this->db->lastInsertId() : null; //有主键返回主键值
     }
     
+    function set_order($order){
+        if (is_array($order)){
+            $this->order = $order;            
+        }
+    }
+    
+    function set_limit(){
+        $argv = func_get_args();
+        $limit = array();
+        switch(count($argv)){
+            case 1:
+                $limit = array(0, $argv[0]);
+                break;
+            case 2:
+                $limit = $argv;
+                break;
+            default:
+                break;
+        }
+        
+        if ($limit){
+            $this->limit = $limit;
+        }
+    }
+    
+    //获取排序
+    protected function get_order(){
+        $list = array();
+        if ($this->order){
+            foreach($this->order as $k=>$v){
+                $v = strtoupper($v);
+                $list[] =  $v == 'DESC' ?  '`' . $k . '` DESC' :  '`' . $k . '` ASC';
+            }
+            $this->order = array();
+        }
+        
+        return $list ? ' ORDER BY ' . implode(',', $list) : '';
+    }
+    
+    //获取limit
+    protected function get_limit(){
+        $str = '';
+        if ($this->limit){
+            $str = ' LIMIT ' . $this->limit[0] . ', ' . $this->limit[1];
+            $this->limit = array();
+        }
+        
+        return $str;
+    }
+    
     
     //implements
     function offsetExists($offset)
@@ -242,10 +283,16 @@ class db_table implements ArrayAccess, Countable
     function offsetGet($offset)
     {
         $where = $this->offset_parse($offset);
+        $order = $this->get_order();
+        $limit = $this->get_limit();
         
-        $sql = 'SELECT * FROM `'. $this->table_name .'` WHERE ' . $where;
+        $sql = 'SELECT * FROM `'. $this->table_name .'` WHERE ' . $where . $order . $limit;
         
-        return $this->db->getRow($sql);
+        if ($limit){
+            return $this->db->getAll($sql);
+        }else{
+            return $this->db->getRow($sql);
+        }
     }
     
     function offsetSet($offset, $value)
@@ -289,7 +336,7 @@ class db_table implements ArrayAccess, Countable
         {
             case 'integer':
             case 'string':
-			case 'double':
+            case 'double':
                 if ($this->table_key)
                 {
                     $where = '`' . $this->table_key . '`= \'' . addcslashes($offset, '\'') . '\'';
@@ -299,34 +346,45 @@ class db_table implements ArrayAccess, Countable
                 $set = array();
                 foreach ($offset as $key => $val)
                 {
-                    if (is_array($val))
-                    {
-                        $set[] = '`' . $key . '` IN (\'' . implode('\', \'', $val) . '\')';
+                    $tmp = explode(':', $key, 2);
+                    $key = $tmp[0];
+                    $opt = '=';
+                    if (isset($tmp[1])){
+                        if (in_array($tmp[1], array('=', '<', '<=', '>', '>='))){
+                            $opt = $tmp[1];
+                        }
                     }
-                    else
+                    switch(gettype($val))
                     {
-                        $set[] = '`' . $key . '`=\'' . addcslashes($val, '\'') . '\'';
+                        case 'array':
+                            $set[] = '`' . $key . '` IN (\'' . implode('\', \'', $val) . '\')';
+                            break;
+                        case 'integer':
+                        case 'double':
+                            $set[] = '`' . $key . '` ' . $opt . ' ' .  $val;
+                            break;
+                        default:
+                            $set[] = '`' . $key . '`' . $opt . '\'' . addcslashes($val, '\'') . '\'';
+                            break;       
                     }
                 }
                 $where = implode(' AND ', $set);
                 break;
             default:
-				throw new Exception('unsuport type "' . gettype($offset) . '"', 10);
-				break;
+                throw new Exception('unsupport type "' . gettype($offset) . '"', 10);
+                break;
         }
         
         return $where;
     }
-	
-	//将数值转化`key`=value形式
-	private function build_query($data){
-		$query = '';
-		foreach($data as $key=>$val){
-			$query .= '`' . $key . '`=' . $val . ', ';
-		}
-		$query = rtrim($query, ' ,');
-		
-		return $query;
-	}
+    
+    //将数值转化`key`=value形式
+    private function build_query($data){
+        $list = array();
+        foreach($data as $key=>$val){
+            $list[] = '`' . $key . '`=' . $val;
+        }
+        return implode(', ', $list);
+    }
 }
 ?>
