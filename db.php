@@ -303,8 +303,8 @@ class db_table implements ArrayAccess, Countable
             if (isset($offset))
             {
                 $where = $this->offset_parse($offset);
+                var_dump($this->build_query($tmp));exit;
                 $sql = 'UPDATE `'. $this->table_name . '` SET ' . $this->build_query($tmp) . ' WHERE ' . $where;
-                
             }
             else
             {
@@ -382,7 +382,19 @@ class db_table implements ArrayAccess, Countable
     private function build_query($data){
         $list = array();
         foreach($data as $key=>$val){
-            $list[] = '`' . $key . '`=' . $val;
+            $opt = '=';
+            $tmp = explode(':', $key, 2);
+            $key = $tmp[0];
+            if (isset($tmp[1])){
+                if (in_array($tmp[1], array('+', '-'))){
+                    $opt = $tmp[1];
+                }
+            }
+            if ($opt == '='){
+                $list[] = '`' . $key . '` ' . $opt. ' \'' . addcslashes($val, '\'') . '\'';
+            }else{
+                $list[] = '`' . $key . '` = `' . $key . '` ' . $opt . ' \'' . addcslashes($val, '\'') . '\'';
+            }
         }
         return implode(', ', $list);
     }
