@@ -190,6 +190,7 @@ class db_table implements ArrayAccess, Countable
     
     protected $limit = array(); //限制
     protected $order = array(); //排序
+    protected $where = array(); //where 条件
     
     function __construct(&$db, $table_name)
     {
@@ -218,13 +219,54 @@ class db_table implements ArrayAccess, Countable
         return $this->table_key ? $this->db->lastInsertId() : null; //有主键返回主键值
     }
     
-    function set_order($order){
-        if (is_array($order)){
-            $this->order = $order;            
+    //查询
+    function query($where){
+        $where = $this->offset_parse($where);
+        $order = $this->get_order();
+        $limit = $this->get_limit();
+        
+        $sql = 'SELECT * FROM `'. $this->table_name .'` WHERE ' . $where . $order . $limit;
+        
+        if ($limit){
+            return $this->db->getAll($sql);
+        }else{
+            return $this->db->getRow($sql);
         }
     }
     
-    function set_limit(){
+    //where 条件
+    function where($where=array()){
+        $this->where = $where;
+        return $this;
+    }
+    
+    //设置排序
+    function order(){
+        $argv = func_get_args();
+        $list = array();
+        if ($argv){
+            foreach($argv as $v){
+                $tmp = explode(' ', $v);
+                if (count($tmp) == 2){
+                    $order = trim($tmp[0]);
+                    if (!isset($this->table_fileds[$order])){
+                        continue;
+                    }
+                    $by = strtoupper(trim($tmp[1])) == 'DESC' ? 'DESC' : 'ASC';
+                    $list[] = '`' . $order . '` ' . $by;
+                }
+            }
+        }
+        
+        if ($list){
+            $this->order = $list;
+        }
+
+        return $this;
+    }
+    
+    //设置limit
+    function limit(){
         $argv = func_get_args();
         $limit = array();
         switch(count($argv)){
@@ -241,16 +283,14 @@ class db_table implements ArrayAccess, Countable
         if ($limit){
             $this->limit = $limit;
         }
+        return $this;
     }
     
     //获取排序
     protected function get_order(){
         $list = array();
         if ($this->order){
-            foreach($this->order as $k=>$v){
-                $v = strtoupper($v);
-                $list[] =  $v == 'DESC' ?  '`' . $k . '` DESC' :  '`' . $k . '` ASC';
-            }
+            $list = $this->order;
             $this->order = array();
         }
         
@@ -282,36 +322,24 @@ class db_table implements ArrayAccess, Countable
     
     function offsetGet($offset)
     {
-        $where = $this->offset_parse($offset);
-        $order = $this->get_order();
-        $limit = $this->get_limit();
-        
-        $sql = 'SELECT * FROM `'. $this->table_name .'` WHERE ' . $where . $order . $limit;
-        
-        if ($limit){
-            return $this->db->getAll($sql);
-        }else{
-            return $this->db->getRow($sql);
-        }
+        return $this->query($offset);
     }
     
     function offsetSet($offset, $value)
     {
-        $tmp = array_intersect_key($this->table_fileds, $value);
-        if ($tmp)
+        $set = $this->build_query($value);
+        if ($set)
         {
             if (isset($offset))
             {
                 $where = $this->offset_parse($offset);
-                var_dump($this->build_query($tmp));exit;
-                $sql = 'UPDATE `'. $this->table_name . '` SET ' . $this->build_query($tmp) . ' WHERE ' . $where;
+                $sql = 'UPDATE `'. $this->table_name . '` SET ' . implode(', ', $set[0]) . ' WHERE ' . $where;
             }
             else
             {
-                $sql = 'INSERT INTO `'.$this->table_name.'` SET ' . $this->build_query($tmp);
+                $sql = 'INSERT INTO `'.$this->table_name.'` SET ' . implode(', ', $set[0]);
             }
-            $param = array_intersect_key($value, $tmp);
-            $this->db->query($sql, $param);
+            $this->db->query($sql, $set[1]);
         }
     }
     
@@ -325,7 +353,18 @@ class db_table implements ArrayAccess, Countable
     
     function count()
     {
-        return 0;
+        $where = '';
+        if ($this->where){
+            $where = $this->offset_parse($this->where);
+            $this->where = array();
+        }
+        
+        $sql = 'SELECT COUNT(*) FROM `'.$this->table_name.'`';
+        if ($where){
+            $sql .= ' WHERE ' . $where;
+        }
+        
+        return $this->db->getOne($sql);
     }
     
     //私有函数
@@ -381,22 +420,27 @@ class db_table implements ArrayAccess, Countable
     //将数值转化`key`=value形式
     private function build_query($data){
         $list = array();
+        $param = array();
         foreach($data as $key=>$val){
             $opt = '=';
             $tmp = explode(':', $key, 2);
             $key = $tmp[0];
+            if (!isset($this->table_fileds[$key])){
+                continue;
+            }
             if (isset($tmp[1])){
                 if (in_array($tmp[1], array('+', '-'))){
                     $opt = $tmp[1];
                 }
             }
+            $param[$key] = $val;
             if ($opt == '='){
-                $list[] = '`' . $key . '` ' . $opt. ' \'' . addcslashes($val, '\'') . '\'';
+                $list[] = '`' . $key . '` ' . $opt. ' ' . $this->table_fileds[$key];
             }else{
-                $list[] = '`' . $key . '` = `' . $key . '` ' . $opt . ' \'' . addcslashes($val, '\'') . '\'';
+                $list[] = '`' . $key . '` = `' . $key . '` ' . $opt . ' ' . $this->table_fileds[$key];
             }
         }
-        return implode(', ', $list);
+        return $list ? array($list, $param)  : array();
     }
 }
 ?>
