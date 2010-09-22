@@ -146,7 +146,7 @@ class db implements ArrayAccess, Countable
                 throw  new Exception ('Unsuport param for query!', 10);
                 break;
         }
-     echo $sql;
+
         if ($param)
         {
             $sth = $this->pdo->prepare($sql, array(PDO::ATTR_CURSOR => PDO::CURSOR_FWDONLY));
@@ -217,6 +217,21 @@ class db_table implements ArrayAccess, Countable
         $this->offsetSet(null, $data);
  
         return $this->table_key ? $this->db->lastInsertId() : null; //有主键返回主键值
+    }
+    
+    //替换
+    function replace($data){
+        $set = $this->build_query($data);
+        if ($set){
+            $sql = 'REPLACE INTO `'.$this->table_name.'` SET ' . implode(', ', $set[0]);
+
+            $this->db->query($sql, $set[1]);
+
+            return $this->table_key ? $this->db->lastInsertId() : null; //有主键返回主键值
+        }
+        
+        return null;
+
     }
     
     //查询
